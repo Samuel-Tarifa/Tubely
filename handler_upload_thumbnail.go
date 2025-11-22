@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,6 +58,18 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	mediaType := header.Header.Get("Content-Type")
 
+	mimeMediaType, _, err := mime.ParseMediaType(mediaType)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error parsing MediaType", err)
+		return
+	}
+
+	if mimeMediaType != "image/png" && mimeMediaType != "image/jpg" {
+		respondWithError(w, http.StatusBadRequest, "file not allowed", err)
+		return
+	}
+
 	metadata, err := cfg.db.GetVideo(videoID)
 
 	if err != nil {
@@ -71,25 +86,32 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	extension:=strings.Split(mediaType,"/")[1]
+	extension := strings.Split(mediaType, "/")[1]
 
-	path:=filepath.Join(cfg.assetsRoot,videoIDString+"."+extension)
+	v := make([]byte, 32)
 
-	createdFile,err:=os.Create(path)
+	rand.Read(v)
 
-	if err!=nil{
-		respondWithError(w,http.StatusInternalServerError,"error creating file",err)
+	filename := base64.RawURLEncoding.EncodeToString(v)
+
+	path := filepath.Join(cfg.assetsRoot, filename+"."+extension)
+
+	createdFile, err := os.Create(path)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating file", err)
 		return
 	}
 
-	_,err=io.Copy(createdFile,file)
+	_, err = io.Copy(createdFile, file)
 
-	if err!=nil{
-		respondWithError(w,http.StatusInternalServerError,"error copying file",err)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error copying file", err)
 		return
 	}
 
-	newThumbnailUrl := fmt.Sprintf("http://localhost:8091/assets/%s.%s",videoID,extension)
+
+	newThumbnailUrl := fmt.Sprintf("http://localhost:8091/assets/%s.%s", filename, extension)
 
 	metadata.ThumbnailURL = &newThumbnailUrl
 
