@@ -5,8 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
-	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/joho/godotenv"
@@ -27,27 +25,6 @@ type apiConfig struct {
 	s3CfDistribution string
 	port             string
 	s3Client         *s3.Client
-}
-
-func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
-
-	if video.VideoURL == nil {
-		return video, nil
-	}
-
-	urlSeparated := strings.Split(*video.VideoURL, ",")
-	if len(urlSeparated) < 2 {
-		log.Println(urlSeparated, "mal separado")
-		return video, nil
-	}
-	bucket := urlSeparated[0]
-	key := urlSeparated[1]
-	signedUrl, err := generatePresignedURL(cfg.s3Client, bucket, key, 5*time.Minute)
-	if err != nil {
-		return video, err
-	}
-	video.VideoURL = &signedUrl
-	return video, nil
 }
 
 func main() {
