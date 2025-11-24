@@ -6,14 +6,15 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/media"
-	"github.com/google/uuid"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/media"
+	"github.com/google/uuid"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
@@ -94,9 +95,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tempFile.Seek(0, io.SeekStart)
+	fastFilepath, err := media.ProcessVideoForFastStart(tempFile.Name())
 
-	aspectRatio, err := media.GetVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error processing video for fast start", err)
+		return
+	}
+
+	fastFile, err := os.Open(fastFilepath)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error oppening fastFile", err)
+		return
+	}
+
+	defer os.Remove(fastFile.Name())
+	defer fastFile.Close()
+
+	aspectRatio, err := media.GetVideoAspectRatio(fastFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error getting aspect ratio", err)
 		return
@@ -116,12 +132,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	v := make([]byte, 32)
 	rand.Read(v)
 	fileKey := base64.RawURLEncoding.EncodeToString(v) + ".mp4"
-	finalKey:=prefix+fileKey
+	finalKey := prefix + fileKey
 
 	params := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &finalKey,
-		Body:        tempFile,
+		Body:        fastFile,
 		ContentType: &mediaType,
 	}
 
@@ -132,11 +148,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	newURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s%s", cfg.s3Bucket, cfg.s3Region, prefix, fileKey)
+	newURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, finalKey)
 
 	video.VideoURL = &newURL
 
-	cfg.db.UpdateVideo(video)
+	err=cfg.db.UpdateVideo(video)
 
-	respondWithJSON(w, http.StatusOK, video)
+	if err!=nil{
+		respondWithError(w,http.StatusInternalServerError,"error updating video",err)
+		return
+	}
+
+	signedVideo,err:=cfg.dbVideoToSignedVideo(video)
+
+	if err!=nil{
+		respondWithError(w,http.StatusInternalServerError,"error signing video url",err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, signedVideo)
 }
